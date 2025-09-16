@@ -1,0 +1,3178 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/charlottejin95/RAG/blob/main/Finetuning_LLMipynb\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Fine-Tuning LLM"
+      ],
+      "metadata": {
+        "id": "VtzEPcHEl2Xa"
+      },
+      "id": "VtzEPcHEl2Xa"
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Environment Setup"
+      ],
+      "metadata": {
+        "id": "AlKo9xZ5mHe3"
+      },
+      "id": "AlKo9xZ5mHe3"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!pip install torch jsonlines pandas datasets transformers accelerate"
+      ],
+      "metadata": {
+        "collapsed": true,
+        "id": "ng9OC2nmmKzg"
+      },
+      "id": "ng9OC2nmmKzg",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!pip install safetensors"
+      ],
+      "metadata": {
+        "id": "EQb1CU-tFj-b",
+        "collapsed": true
+      },
+      "id": "EQb1CU-tFj-b",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!pip install evaluate rouge_score"
+      ],
+      "metadata": {
+        "collapsed": true,
+        "id": "3YjmeV9rC802"
+      },
+      "id": "3YjmeV9rC802",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "from transformers import AutoModelForCausalLM, AutoTokenizer\n",
+        "import torch\n",
+        "import textwrap\n",
+        "\n",
+        "device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")"
+      ],
+      "metadata": {
+        "id": "VU4pP_R6mv1B"
+      },
+      "id": "VU4pP_R6mv1B",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "753b9c5b",
+      "metadata": {
+        "id": "753b9c5b"
+      },
+      "source": [
+        "## Function of Finetuning: finetuned vs. non-finetuned models"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "c86d2cd9",
+      "metadata": {
+        "id": "c86d2cd9"
+      },
+      "source": [
+        "### Non-Finetuned model--Meta AI's LLaMA LLM\n",
+        "\n",
+        "**Web link**: https://huggingface.co/openlm-research/open_llama_3b_v2\n",
+        "\n",
+        "**Introduction**: In the above repo link, the team presents a **permissively licensed open source reproduction of Meta AI's LLaMA large language model**. They are releasing a series of **3B, 7B and 13B models trained on 1T tokens**. They also provide PyTorch and JAX weights of pre-trained OpenLLaMA models, as well as evaluation results and comparison against the original LLaMA models. The v2 model is better than the old v1 model trained on a different data mixture"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Load LLM"
+      ],
+      "metadata": {
+        "id": "EnIgyefItwSJ"
+      },
+      "id": "EnIgyefItwSJ"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "1ef82350",
+      "metadata": {
+        "id": "1ef82350",
+        "collapsed": true
+      },
+      "outputs": [],
+      "source": [
+        "model_name = \"openlm-research/open_llama_3b_v2\"\n",
+        "\n",
+        "#Load the tokenizer associated with the model\n",
+        "tokenizer = AutoTokenizer.from_pretrained(model_name)\n",
+        "#AutoTokenizer automatically figure out the right tokenizer class for the model (LlamaTokenizer in this case)\n",
+        "\n",
+        "#Loads the pretrained model for causal language modeling(predict the next word based on prev context)\n",
+        "non_finetuned = AutoModelForCausalLM.from_pretrained(model_name, device_map=\"auto\")\n",
+        "#AutoModelForCausalLM automatically loads the correct architecture for language modeling (LlamaForCausalLM in this case)\n",
+        "#device_map=\"auto\"--lets the library automatically place model layers on available hardware\n",
+        "\n",
+        "#Specify which device to use if necessary\n",
+        "# non_finetuned.to(device)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Q&A Example"
+      ],
+      "metadata": {
+        "id": "wVEpmPXXt9Nk"
+      },
+      "id": "wVEpmPXXt9Nk"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "213b3936",
+      "metadata": {
+        "id": "213b3936"
+      },
+      "outputs": [],
+      "source": [
+        "#Q&A example using non-finetuned model\n",
+        "input_text = \"Tell me how to train my dog to sit\"\n",
+        "non_finetuned_output = non_finetuned.generate(tokenizer(input_text, return_tensors=\"pt\").input_ids.to(device),\n",
+        "                                              max_length=100)\n",
+        "#tokenizer()--Converts the text into token IDs that the model can understand; return_tensors=\"pt\"--return PyTorch tensors\n",
+        "#.input_ids.to()--Moves the input_ids tensor to the appropriate device defined before\n",
+        "#.generate()--The model generates based on input, up to max_length tokens, including the input\n",
+        "\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(textwrap.fill(tokenizer.decode(non_finetuned_output[0], #convert result back to readable text\n",
+        "                                     skip_special_tokens=True), #ignore special tokens like <s>, </s>, <pad> in the output\n",
+        "                    width=100))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Define Inference Function"
+      ],
+      "metadata": {
+        "id": "86VH9yx2uAy-"
+      },
+      "id": "86VH9yx2uAy-"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Self-defined function to generate reuseable Q&A using LLM\n",
+        "def inference(text, model, tokenizer, max_input_tokens=1000, max_output_tokens=100):\n",
+        "  # Tokenize\n",
+        "  input_ids = tokenizer.encode(text,\n",
+        "                               return_tensors=\"pt\",\n",
+        "                               truncation=True,\n",
+        "                               max_length=max_input_tokens\n",
+        "                               ) #Encodes text into token IDs, as a PyTorch tensor.\n",
+        "  # Generate\n",
+        "  device = model.device\n",
+        "  generated_tokens_with_prompt = model.generate(input_ids=input_ids.to(device),\n",
+        "                                                max_length=max_output_tokens\n",
+        "                                                )#Generates tokens with the model.The result includes both prompt & new tokens.\n",
+        "  # Decode\n",
+        "  generated_text_with_prompt = tokenizer.batch_decode(generated_tokens_with_prompt,\n",
+        "                                                      skip_special_tokens=True\n",
+        "                                                      )#Converts generated tokens into readable text.\n",
+        "  # Strip the prompt\n",
+        "  generated_text_answer = generated_text_with_prompt[0][len(text):]\n",
+        "  return generated_text_answer"
+      ],
+      "metadata": {
+        "id": "cxJXr86LCJ8q"
+      },
+      "id": "cxJXr86LCJ8q",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "9fd34a82",
+      "metadata": {
+        "id": "9fd34a82"
+      },
+      "outputs": [],
+      "source": [
+        "# Q&A Example 2:\n",
+        "input_text = \"What do you think of Mars?\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(inference(input_text, non_finetuned, tokenizer))\n",
+        "#print(textwrap.fill(inference(input_text, non_finetuned, tokenizer),width=100))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "b22652ae",
+      "metadata": {
+        "id": "b22652ae"
+      },
+      "outputs": [],
+      "source": [
+        "# Q&A Example 3:\n",
+        "input_text = \"taylor swift's best friend\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(inference(input_text, non_finetuned, tokenizer))\n",
+        "#print(textwrap.fill(inference(input_text, non_finetuned, tokenizer),width=100))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "05d6d640",
+      "metadata": {
+        "id": "05d6d640"
+      },
+      "outputs": [],
+      "source": [
+        "# Q&A Example 4:\n",
+        "input_text = \"\"\"Agent: I'm here to help you with your Amazon deliver order.\n",
+        "Customer: I didn't get my item\n",
+        "Agent: I'm sorry to hear that. Which item was it?\n",
+        "Customer: the blanket\n",
+        "Agent:\"\"\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(inference(input_text, non_finetuned, tokenizer))\n",
+        "#print(textwrap.fill(inference(input_text, non_finetuned, tokenizer),width=100))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "**Notes**:\n",
+        "\n",
+        "Based on the previous examples, we can notice that there are multiple problems with unfinetuned model:\n",
+        "- Lacks task-specific skills\n",
+        "- Generate many repetition loops\n",
+        "- Cannot follow instructions well\n",
+        "\n",
+        "Because an unfinetuned model has only been trained on general web-scale text using causal language modeling. While it has learned a lot of basic language patterns, it has not been specialized for specific tasks like Q&A, summarization, or following user instructions."
+      ],
+      "metadata": {
+        "id": "0hV4ckFlwXrU"
+      },
+      "id": "0hV4ckFlwXrU"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "del non_finetuned\n",
+        "torch.cuda.empty_cache()"
+      ],
+      "metadata": {
+        "id": "AZ-gMNXBJXF8"
+      },
+      "id": "AZ-gMNXBJXF8",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Finetuned model--Llama Mediocredev text generation\n",
+        "\n",
+        "**Web link**: https://huggingface.co/mediocredev/open-llama-3b-v2-chat\n",
+        "\n",
+        "**Introduction**: The Mediocredev open Llama 3b V2 Chat Gguf model is a powerful tool for text generation, designed to provide efficient and accurate results. Built on the LLaMA 3B v2 architecture, it has been quantized to reduce its size while maintaining its capabilities.It can process and respond to text-based inputs quickly, making it suitable for a wide range of applications, from chatbots to content generation."
+      ],
+      "metadata": {
+        "id": "431uNphPxO4h"
+      },
+      "id": "431uNphPxO4h"
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Load LLM"
+      ],
+      "metadata": {
+        "id": "rULJZhP22zv4"
+      },
+      "id": "rULJZhP22zv4"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "809c1d28",
+      "metadata": {
+        "id": "809c1d28"
+      },
+      "outputs": [],
+      "source": [
+        "model_name = \"mediocredev/open-llama-3b-v2-chat\"\n",
+        "\n",
+        "#Load the tokenizer associated with the model\n",
+        "tokenizer = AutoTokenizer.from_pretrained(model_name)\n",
+        "\n",
+        "#Loads the finetuned model for text-generation modeling\n",
+        "finetuned_model = AutoModelForCausalLM.from_pretrained(model_name, device_map=\"auto\")"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Q&A Example--with vs. without prompt format"
+      ],
+      "metadata": {
+        "id": "eM_I72X823Rb"
+      },
+      "id": "eM_I72X823Rb"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "588ad61c",
+      "metadata": {
+        "id": "588ad61c"
+      },
+      "outputs": [],
+      "source": [
+        "#Input without special instruction\n",
+        "input_text = \"Tell me how to train my dog to sit\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "finetuned_output = inference(input_text, finetuned_model, tokenizer)\n",
+        "print(finetuned_output)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "7e8f0e7f",
+      "metadata": {
+        "id": "7e8f0e7f"
+      },
+      "outputs": [],
+      "source": [
+        "#Input in instruction-tuned prompt format (common with models like LLaMA, OpenLLaMA instruction models)\n",
+        "#[INST] ... [/INST](Many chat-optimized models are trained with these tags, and if see them, will respond more intelligently)\n",
+        "input_text = \"[INST]Tell me how to train my dog to sit[/INST]\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "finetuned_output = inference(input_text, finetuned_model, tokenizer)\n",
+        "print(finetuned_output)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "01cf87f6",
+      "metadata": {
+        "id": "01cf87f6"
+      },
+      "outputs": [],
+      "source": [
+        "#Example 2:\n",
+        "input_text = \"[INST]What do you think of Mars?[/INST]\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(textwrap.fill(inference(input_text, finetuned_model, tokenizer),width=100))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "32db06c7",
+      "metadata": {
+        "id": "32db06c7"
+      },
+      "outputs": [],
+      "source": [
+        "#Example 3:\n",
+        "input_text = \"[INST]taylor swift's best friend[/INST]\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(textwrap.fill(inference(input_text, finetuned_model, tokenizer),width=100))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "be48bda1",
+      "metadata": {
+        "id": "be48bda1"
+      },
+      "outputs": [],
+      "source": [
+        "#Example 4: Without prompt format\n",
+        "input_text = \"\"\"Agent: I'm here to help you with your Amazon deliver order.\n",
+        "Customer: I didn't get my item\n",
+        "Agent: I'm sorry to hear that. Which item was it?\n",
+        "Customer: the blanket\n",
+        "Agent:\"\"\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(inference(input_text, finetuned_model, tokenizer))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Example 4: With prompt format: [INST]...[/INST], ???(answer format more like agent & customer conversation)\n",
+        "input_text = \"\"\"[INST]Agent: I'm here to help you with your Amazon deliver order.\n",
+        "Customer: I didn't get my item\n",
+        "Agent: I'm sorry to hear that. Which item was it?\n",
+        "Customer: the blanket\n",
+        "Agent:???[/INST]\"\"\"\n",
+        "print('Input Question:')\n",
+        "print(input_text,'\\n')\n",
+        "print('Output Answer:')\n",
+        "print(inference(input_text, finetuned_model, tokenizer))"
+      ],
+      "metadata": {
+        "id": "JrLPI7vWa3ri"
+      },
+      "id": "JrLPI7vWa3ri",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "del finetuned_model\n",
+        "torch.cuda.empty_cache()"
+      ],
+      "metadata": {
+        "id": "q54geZuHM4yd"
+      },
+      "id": "q54geZuHM4yd",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "9f512b13",
+      "metadata": {
+        "id": "9f512b13"
+      },
+      "source": [
+        "## Model Finetuning"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Environment Setup"
+      ],
+      "metadata": {
+        "id": "vSFIRr659uGH"
+      },
+      "id": "vSFIRr659uGH"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import jsonlines #Change each data point to one row\n",
+        "import itertools\n",
+        "import pandas as pd\n",
+        "from pprint import pprint # print output\n",
+        "\n",
+        "import datasets #Load dataset using DT_names\n",
+        "from datasets import load_dataset\n",
+        "import numpy as np"
+      ],
+      "metadata": {
+        "id": "k2fu42Zo9yi7"
+      },
+      "id": "k2fu42Zo9yi7",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "b944c304",
+      "metadata": {
+        "id": "b944c304"
+      },
+      "source": [
+        "### Data for model finetuning vs pre-training"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "3cd7700c",
+      "metadata": {
+        "id": "3cd7700c"
+      },
+      "source": [
+        "#### Pretraining data set\n",
+        "\n",
+        "**Web Link**: https://huggingface.co/datasets/allenai/c4/blob/main/README.md\n",
+        "\n",
+        "**Introduction**: A colossal, cleaned version of Common Crawl's web crawl corpus (Based on [Common Crawl dataset]( https://commoncrawl.org)). This is the processed version of Google's C4 dataset"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "##### Load data"
+      ],
+      "metadata": {
+        "id": "ayFMLT1JExKX"
+      },
+      "id": "ayFMLT1JExKX"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "bc92a955",
+      "metadata": {
+        "id": "bc92a955"
+      },
+      "outputs": [],
+      "source": [
+        "#Load pretraining data as a streaming iterable dataset\n",
+        "pretrained_dataset = load_dataset(\"allenai/c4\", \"en\",\n",
+        "                                  split=\"train\",\n",
+        "                                  streaming=True #Instead of downloading entire dataset to disk, enables lazy loading--Samples are streamed one by one\n",
+        "                                  )"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "##### Data Examples"
+      ],
+      "metadata": {
+        "id": "4M87qxZzEzPP"
+      },
+      "id": "4M87qxZzEzPP"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "5ae5f773",
+      "metadata": {
+        "id": "5ae5f773"
+      },
+      "outputs": [],
+      "source": [
+        "#Show the pretraining data\n",
+        "n = 2\n",
+        "print(\"Pretrained dataset:\")\n",
+        "\n",
+        "#itertools.islice()--grab the first n items from the streaming iterable\n",
+        "top_n = itertools.islice(pretrained_dataset, n)\n",
+        "num=1\n",
+        "for i in top_n:\n",
+        "  print('Data Example ',num,':')\n",
+        "  print('Text:\\n', textwrap.fill(i['text'],width=100))\n",
+        "  print('\\ntimestamp: ',i['timestamp'])\n",
+        "  print('url: ',i['url'],'\\n')\n",
+        "  num+=1"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "cc33338d",
+      "metadata": {
+        "id": "cc33338d"
+      },
+      "source": [
+        "#### Finetuning dataset\n",
+        "\n",
+        "Using this dataset in this project for finetuning\n",
+        "\n",
+        "**Web Link**: https://huggingface.co/datasets/lamini/lamini_docs\n",
+        "\n",
+        "**Introduction**: [Lamini](https://huggingface.co/lamini) is an LLM engine that allows any developer to train high-performing LLMs on large datasets using the Lamini library. It uses Lamini dataset generator pipeline to generate a filtered dataset having around 37k questions and responses samples."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "##### Load Data"
+      ],
+      "metadata": {
+        "id": "b88NGxxKE2RJ"
+      },
+      "id": "b88NGxxKE2RJ"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "66668b38",
+      "metadata": {
+        "id": "66668b38"
+      },
+      "outputs": [],
+      "source": [
+        "# Load the dataset from Hugging Face\n",
+        "dataset = load_dataset('lamini/lamini_docs')"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Display the dataset info\n",
+        "print(dataset)"
+      ],
+      "metadata": {
+        "id": "aDtCKriUCRvq"
+      },
+      "id": "aDtCKriUCRvq",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "##### Data Examples"
+      ],
+      "metadata": {
+        "id": "TVeDH_9iE4gd"
+      },
+      "id": "TVeDH_9iE4gd"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Access the 'train' split\n",
+        "train_dataset = dataset['train']\n",
+        "\n",
+        "# Data Examples\n",
+        "for i in range(2):  # Adjust the range as needed\n",
+        "    print('Data Example ',i+1,':')\n",
+        "    print('Question:\\n', textwrap.fill(train_dataset[i]['question'],width=100))\n",
+        "    print('\\nAnswer:\\n', textwrap.fill(train_dataset[i]['answer'],width=100))\n",
+        "    print('\\ninput_ids: ',train_dataset[i]['input_ids'])\n",
+        "    print('attention_mask: ',train_dataset[i]['attention_mask'])\n",
+        "    print('labels: ',train_dataset[i]['labels'],'\\n')\n"
+      ],
+      "metadata": {
+        "id": "JOyAQ2gdPR1x"
+      },
+      "id": "JOyAQ2gdPR1x",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "b84160b8",
+      "metadata": {
+        "id": "b84160b8"
+      },
+      "source": [
+        "##### Various data formatting methods"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "###### 01.Combine question and answer"
+      ],
+      "metadata": {
+        "id": "WjDjsNilacsg"
+      },
+      "id": "WjDjsNilacsg"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "dca6b7e7",
+      "metadata": {
+        "id": "dca6b7e7"
+      },
+      "outputs": [],
+      "source": [
+        "examples = train_dataset\n",
+        "text = examples[\"question\"][0] + examples[\"answer\"][0]\n",
+        "print(textwrap.fill(text,width=100))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "5b0fae24",
+      "metadata": {
+        "id": "5b0fae24"
+      },
+      "outputs": [],
+      "source": [
+        "if \"question\" in examples and \"answer\" in examples:\n",
+        "  text = examples[\"question\"][0] + examples[\"answer\"][0]\n",
+        "elif \"instruction\" in examples and \"response\" in examples:\n",
+        "  text = examples[\"instruction\"][0] + examples[\"response\"][0]\n",
+        "elif \"input\" in examples and \"output\" in examples:\n",
+        "  text = examples[\"input\"][0] + examples[\"output\"][0]"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "######02.Add Prompt"
+      ],
+      "metadata": {
+        "id": "fxov8uW7bPDk"
+      },
+      "id": "fxov8uW7bPDk"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "cc40e0ab",
+      "metadata": {
+        "id": "cc40e0ab"
+      },
+      "outputs": [],
+      "source": [
+        "#Adding '###', similar to [INST], can give model clues about questions and answers\n",
+        "prompt_template_qa=\"\"\"### Question:\n",
+        "{question}\n",
+        "\n",
+        "### Answer:\n",
+        "{answer}\"\"\"\n",
+        "\n",
+        "prompt_template_q = \"\"\"### Question:\n",
+        "{question}\n",
+        "\n",
+        "### Answer:\"\"\""
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "055b5661",
+      "metadata": {
+        "id": "055b5661"
+      },
+      "outputs": [],
+      "source": [
+        "#Data Example using prompt\n",
+        "question = examples[\"question\"][0]\n",
+        "answer = examples[\"answer\"][0]\n",
+        "\n",
+        "text_with_prompt_template = prompt_template_qa.format(question=question, answer=answer)\n",
+        "print(text_with_prompt_template)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "f81a6078",
+      "metadata": {
+        "id": "f81a6078"
+      },
+      "outputs": [],
+      "source": [
+        "#Generate two types of data format:\n",
+        "#Type 1: question & answer in one text with prompt\n",
+        "#Type 2: only question in text and seperate answer\n",
+        "\n",
+        "num_examples = len(examples[\"question\"])\n",
+        "finetuning_dataset_text_only = [] #type 1\n",
+        "finetuning_dataset_question_answer = [] #type 2\n",
+        "for i in range(num_examples):\n",
+        "  question = examples[\"question\"][i]\n",
+        "  answer = examples[\"answer\"][i]\n",
+        "\n",
+        "  text_with_prompt_template_qa = prompt_template_qa.format(question=question, answer=answer)\n",
+        "  finetuning_dataset_text_only.append({\"text\": text_with_prompt_template_qa})\n",
+        "\n",
+        "  text_with_prompt_template_q = prompt_template_q.format(question=question)\n",
+        "  finetuning_dataset_question_answer.append({\"question\": text_with_prompt_template_q, \"answer\": answer})"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "f517adf4",
+      "metadata": {
+        "id": "f517adf4"
+      },
+      "outputs": [],
+      "source": [
+        "#Type 1 Data Example\n",
+        "pprint(finetuning_dataset_text_only[0])"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "5febb8c8",
+      "metadata": {
+        "id": "5febb8c8"
+      },
+      "outputs": [],
+      "source": [
+        "#Type 2 Data Example\n",
+        "pprint(finetuning_dataset_question_answer[0])"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "7e93258d",
+      "metadata": {
+        "id": "7e93258d"
+      },
+      "source": [
+        "##### Common ways of storing data"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "38e91b0a",
+      "metadata": {
+        "id": "38e91b0a"
+      },
+      "outputs": [],
+      "source": [
+        "#Saving as JSON file, save space\n",
+        "with jsonlines.open(f'lamini_docs_processed.jsonl', 'w') as writer:\n",
+        "    writer.write_all(finetuning_dataset_question_answer)\n",
+        "\n",
+        "#Note:Expected input should be a list of dictionaries (or any iterable of dicts)\n",
+        "#     Each dictionary will be written as a separate line in the .jsonl file"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "517cfc56",
+      "metadata": {
+        "id": "517cfc56"
+      },
+      "outputs": [],
+      "source": [
+        "finetuning_dataset_name = \"lamini/lamini_docs\"\n",
+        "finetuning_dataset = load_dataset(finetuning_dataset_name)\n",
+        "print(finetuning_dataset)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "501de373",
+      "metadata": {
+        "id": "501de373"
+      },
+      "source": [
+        "#### Instruction Tuning dataset\n",
+        "\n",
+        "Instruction tuning involves fine-tuning a pretrained language model on a curated dataset of (instruction, input, output)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "5729f6ce",
+      "metadata": {
+        "id": "5729f6ce"
+      },
+      "outputs": [],
+      "source": [
+        "import itertools\n",
+        "import jsonlines\n",
+        "\n",
+        "from datasets import load_dataset\n",
+        "from pprint import pprint\n",
+        "\n",
+        "from transformers import AutoTokenizer, AutoModelForCausalLM\n",
+        "from transformers import AutoModelForSeq2SeqLM, AutoTokenizer"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "4a712487",
+      "metadata": {
+        "id": "4a712487"
+      },
+      "source": [
+        "##### Load instruction tuning dataset\n",
+        "\n",
+        "**Dataset Used**: tatsu-lab/alpaca\n",
+        "\n",
+        "**Web Link**: https://huggingface.co/datasets/tatsu-lab/alpaca\n",
+        "\n",
+        "**Introduction**: Alpaca is a dataset of 52,000 instructions and demonstrations generated by OpenAI's text-davinci-003 engine. This instruction data can be used to conduct instruction-tuning for language models and make the language model follow instruction better."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "1a4ed11a",
+      "metadata": {
+        "id": "1a4ed11a"
+      },
+      "outputs": [],
+      "source": [
+        "#Load Data\n",
+        "instruction_tuned_dataset = load_dataset(\"tatsu-lab/alpaca\", split=\"train\", streaming=True)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "instruction_tuned_dataset.info"
+      ],
+      "metadata": {
+        "id": "yXVvQwENi9_m"
+      },
+      "id": "yXVvQwENi9_m",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "9e48415c",
+      "metadata": {
+        "id": "9e48415c"
+      },
+      "outputs": [],
+      "source": [
+        "#Data Example\n",
+        "m = 2\n",
+        "print(\"Instruction-tuned dataset:\")\n",
+        "top_m = list(itertools.islice(instruction_tuned_dataset, m))\n",
+        "num=1\n",
+        "for j in top_m:\n",
+        "  print('Data Example ',num,':')\n",
+        "  pprint(j)\n",
+        "  print('\\n')\n",
+        "  num+=1"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "54f2cf23",
+      "metadata": {
+        "id": "54f2cf23"
+      },
+      "source": [
+        "##### Prompt Templates"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "441aeced",
+      "metadata": {
+        "id": "441aeced"
+      },
+      "outputs": [],
+      "source": [
+        "#While finetuning, provide detailed instruction, rules, and limiation, increasing the performanace\n",
+        "#Type 1\n",
+        "prompt_template_with_input = \"\"\"Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n",
+        "\n",
+        "### Instruction:\n",
+        "{instruction}\n",
+        "\n",
+        "### Input:\n",
+        "{input}\n",
+        "\n",
+        "### Response:\"\"\"\n",
+        "\n",
+        "#Tyep 2\n",
+        "prompt_template_without_input = \"\"\"Below is an instruction that describes a task. Write a response that appropriately completes the request.\n",
+        "\n",
+        "### Instruction:\n",
+        "{instruction}\n",
+        "\n",
+        "### Response:\"\"\""
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "26a977e7",
+      "metadata": {
+        "id": "26a977e7"
+      },
+      "source": [
+        "##### Hydrate prompts"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "70506882",
+      "metadata": {
+        "id": "70506882"
+      },
+      "outputs": [],
+      "source": [
+        "#Add data to prompt templates\n",
+        "processed_data = []\n",
+        "for j in top_m:\n",
+        "  if not j[\"input\"]: # If no input, use type 2\n",
+        "    processed_prompt = prompt_template_without_input.format(instruction=j[\"instruction\"])\n",
+        "  else: #If have input, use type 1\n",
+        "    processed_prompt = prompt_template_with_input.format(instruction=j[\"instruction\"], input=j[\"input\"])\n",
+        "\n",
+        "  processed_data.append({\"input\": processed_prompt, \"output\": j[\"output\"]})"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "3f176a0b",
+      "metadata": {
+        "id": "3f176a0b"
+      },
+      "outputs": [],
+      "source": [
+        "#Data Example:\n",
+        "pprint(processed_data[0])"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "6ad87987",
+      "metadata": {
+        "id": "6ad87987"
+      },
+      "source": [
+        "##### Save data to jsonl"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "d8186af6",
+      "metadata": {
+        "id": "d8186af6"
+      },
+      "outputs": [],
+      "source": [
+        "#Saving as JSON file, save space\n",
+        "with jsonlines.open(f'alpaca_processed.jsonl', 'w') as writer:\n",
+        "    writer.write_all(processed_data)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "277b4ad5",
+      "metadata": {
+        "id": "277b4ad5"
+      },
+      "source": [
+        "### Try smaller models--EleutherAI Pythia\n",
+        "\n",
+        "**Web Link**: https://huggingface.co/EleutherAI/pythia-70m?utm_source=chatgpt.com\n",
+        "\n",
+        "**Introduction**:The Pythia Scaling Suite is a collection of models developed to facilitate interpretability [research](https://arxiv.org/pdf/2304.01373). It contains two sets of eight models of sizes 70M, 160M, 410M, 1B, 1.4B, 2.8B, 6.9B, and 12B"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Model without Finetuning"
+      ],
+      "metadata": {
+        "id": "Pp2fa_brsS-b"
+      },
+      "id": "Pp2fa_brsS-b"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "c37ef86e",
+      "metadata": {
+        "id": "c37ef86e"
+      },
+      "outputs": [],
+      "source": [
+        "#Load LLM\n",
+        "tokenizer = AutoTokenizer.from_pretrained(\"EleutherAI/pythia-70m\")\n",
+        "model = AutoModelForCausalLM.from_pretrained(\"EleutherAI/pythia-70m\")"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "afe5ede0",
+      "metadata": {
+        "id": "afe5ede0"
+      },
+      "outputs": [],
+      "source": [
+        "def inference_with_att(input_text, model, tokenizer, max_input_tokens=1000, max_output_tokens=100):\n",
+        "  # Tokenizer define how to generate token\n",
+        "  if tokenizer.pad_token is None:\n",
+        "    tokenizer.pad_token = tokenizer.eos_token\n",
+        "\n",
+        "  input = tokenizer(\n",
+        "          input_text,\n",
+        "          return_tensors=\"pt\",\n",
+        "          truncation=True,\n",
+        "          padding=True,\n",
+        "          max_length=max_input_tokens\n",
+        "  )\n",
+        "\n",
+        "  # Generate\n",
+        "  device = model.device\n",
+        "  generated_tokens_with_prompt = model.generate(input_ids=input['input_ids'].to(device),\n",
+        "                                                attention_mask=input['attention_mask'].to(device),\n",
+        "                                                pad_token_id=tokenizer.pad_token_id,\n",
+        "                                                max_length=max_output_tokens\n",
+        "                                                )\n",
+        "\n",
+        "  # Decode\n",
+        "  generated_text_with_prompt = tokenizer.batch_decode(generated_tokens_with_prompt,\n",
+        "                                                      skip_special_tokens=True)\n",
+        "\n",
+        "  # Strip the prompt\n",
+        "  generated_text_answer = generated_text_with_prompt[0][len(input_text):]\n",
+        "\n",
+        "  return generated_text_answer"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "22f5e568",
+      "metadata": {
+        "id": "22f5e568"
+      },
+      "outputs": [],
+      "source": [
+        "#Load Testing Dataset:\n",
+        "finetuning_dataset_path = \"lamini/lamini_docs\"\n",
+        "finetuning_dataset = load_dataset(finetuning_dataset_path)\n",
+        "print(finetuning_dataset)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "b77abca6",
+      "metadata": {
+        "id": "b77abca6"
+      },
+      "outputs": [],
+      "source": [
+        "test_sample = finetuning_dataset[\"test\"][0]\n",
+        "print('Question:')\n",
+        "print(test_sample['question'],'\\n')\n",
+        "print('Expected Answer:')\n",
+        "pprint(test_sample['answer'])\n",
+        "\n",
+        "print('\\nLLM Answer:')\n",
+        "pprint(inference_with_att(test_sample['question'], model,tokenizer))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "8bfe428d",
+      "metadata": {
+        "id": "8bfe428d"
+      },
+      "source": [
+        "#### Model with Finetuning"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "e3df65ed",
+      "metadata": {
+        "id": "e3df65ed"
+      },
+      "outputs": [],
+      "source": [
+        "instruction_model = AutoModelForCausalLM.from_pretrained(\"lamini/lamini_docs_finetuned\")"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "9e4c39c3",
+      "metadata": {
+        "id": "9e4c39c3"
+      },
+      "outputs": [],
+      "source": [
+        "test_sample = finetuning_dataset[\"test\"][0]\n",
+        "print('Question:')\n",
+        "print(test_sample['question'],'\\n')\n",
+        "print('Expected Answer:')\n",
+        "pprint(test_sample['answer'])\n",
+        "\n",
+        "print('\\nLLM Answer:')\n",
+        "pprint(inference_with_att(test_sample['question'], instruction_model,tokenizer))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Upload data to Huggingface (if needed)"
+      ],
+      "metadata": {
+        "id": "buN5mn9AendG"
+      },
+      "id": "buN5mn9AendG"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "3da151c2",
+      "metadata": {
+        "id": "3da151c2"
+      },
+      "outputs": [],
+      "source": [
+        "# Method to upload your own dataset to Huggingface\n",
+        "\n",
+        "# !pip install huggingface_hub\n",
+        "# !huggingface-cli login\n",
+        "\n",
+        "# import pandas as pd\n",
+        "# import datasets\n",
+        "# from datasets import Dataset\n",
+        "\n",
+        "# finetuning_dataset = Dataset.from_pandas(pd.DataFrame(data=finetuning_dataset))\n",
+        "# finetuning_dataset.push_to_hub(dataset_path_hf)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "1c55279f",
+      "metadata": {
+        "id": "1c55279f"
+      },
+      "source": [
+        "### Data preparation"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Environment Setup"
+      ],
+      "metadata": {
+        "id": "Sn4W9jdEfANC"
+      },
+      "id": "Sn4W9jdEfANC"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "bfc9f672",
+      "metadata": {
+        "id": "bfc9f672"
+      },
+      "outputs": [],
+      "source": [
+        "import pandas as pd\n",
+        "import datasets\n",
+        "\n",
+        "from pprint import pprint\n",
+        "from transformers import AutoTokenizer"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "ed223760",
+      "metadata": {
+        "id": "ed223760"
+      },
+      "source": [
+        "#### Step 1: Tokenizing text"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "f247cd15",
+      "metadata": {
+        "id": "f247cd15"
+      },
+      "outputs": [],
+      "source": [
+        "#Load Tokenizer\n",
+        "tokenizer = AutoTokenizer.from_pretrained(\"EleutherAI/pythia-70m\") #Automatically selects the right tokenizer class"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "37f55e08",
+      "metadata": {
+        "id": "37f55e08"
+      },
+      "outputs": [],
+      "source": [
+        "#Data Example:\n",
+        "text = \"Hi, how are you?\"\n",
+        "print('Input Text: ',text)\n",
+        "\n",
+        "encoded_text = tokenizer(text)[\"input_ids\"]\n",
+        "print('Encoded Text: ',encoded_text)\n",
+        "\n",
+        "decoded_text = tokenizer.decode(encoded_text)\n",
+        "print(\"Decoded tokens back into text: \", decoded_text)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "aa452dec",
+      "metadata": {
+        "id": "aa452dec"
+      },
+      "source": [
+        "**Tokenize multiple texts at once** :"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "04882f2a",
+      "metadata": {
+        "id": "04882f2a"
+      },
+      "outputs": [],
+      "source": [
+        "list_texts = [\"Hi, how are you?\", \"I'm good\", \"Yes\"]\n",
+        "encoded_texts = tokenizer(list_texts)\n",
+        "print(\"Encoded several texts: \", encoded_texts[\"input_ids\"])"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "bf2e59a4",
+      "metadata": {
+        "id": "bf2e59a4"
+      },
+      "source": [
+        "#### Step 2: Padding and truncation"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "09fdbb16",
+      "metadata": {
+        "id": "09fdbb16"
+      },
+      "outputs": [],
+      "source": [
+        "# Using padding to fill with meaningless characters, making each text same length, for parallel calculation\n",
+        "\n",
+        "#Set padding method: use the end-of-sequence token (</s>, often ID 0) as the pad token\n",
+        "tokenizer.pad_token = tokenizer.eos_token\n",
+        "#Padding needed: set to the length of the longest string in the batch\n",
+        "encoded_texts_longest = tokenizer(list_texts, padding=True)\n",
+        "\n",
+        "#Previous Example\n",
+        "print('Plan text: ', list_texts)\n",
+        "print(\"Encoded using padding: \", encoded_texts_longest[\"input_ids\"])"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "c210247b",
+      "metadata": {
+        "id": "c210247b"
+      },
+      "outputs": [],
+      "source": [
+        "#Truncation: Because every LLM has a maximum number of tokens it can handle\n",
+        "\n",
+        "#Set truncate threshold: If any tokenized string exceeds 3 tokens, it'll cut off after the 3rd token.\n",
+        "tokenizer.truncation_side = \"right\"\n",
+        "encoded_texts_truncation = tokenizer(list_texts, max_length=3, truncation=True, padding=True)\n",
+        "\n",
+        "#Previous Example\n",
+        "print('Truncate from right--Default :')\n",
+        "print('Plan text: ', list_texts)\n",
+        "print(\"Encoded using truncation: \", encoded_texts_truncation[\"input_ids\"],'\\n')\n",
+        "\n",
+        "#If need truncate from left:\n",
+        "tokenizer.truncation_side = \"left\"\n",
+        "encoded_texts_truncation_left = tokenizer(list_texts, max_length=3, truncation=True, padding=True)\n",
+        "print('Truncate from left :')\n",
+        "print('Plan text: ', list_texts)\n",
+        "print(\"Encoded using truncation: \", encoded_texts_truncation_left[\"input_ids\"])"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "00d09d35",
+      "metadata": {
+        "id": "00d09d35"
+      },
+      "source": [
+        "#### Step 3: Prepare instruction dataset"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Load Dataset:\n",
+        "filename = 'lamini/lamini_docs'\n",
+        "dataset = load_dataset(filename)\n",
+        "examples = dataset['train']\n",
+        "\n",
+        "if \"question\" in examples and \"answer\" in examples:\n",
+        "  text = examples[\"question\"][0] + examples[\"answer\"][0]\n",
+        "elif \"instruction\" in examples and \"response\" in examples:\n",
+        "  text = examples[\"instruction\"][0] + examples[\"response\"][0]\n",
+        "elif \"input\" in examples and \"output\" in examples:\n",
+        "  text = examples[\"input\"][0] + examples[\"output\"][0]\n",
+        "\n",
+        "\n",
+        "#Define template with prompt:\n",
+        "prompt_template = \"\"\"### Question:\n",
+        "{question}\n",
+        "\n",
+        "### Answer:\"\"\""
+      ],
+      "metadata": {
+        "id": "QauqcdB3jsSO"
+      },
+      "id": "QauqcdB3jsSO",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Hydrate prompts:\n",
+        "num_examples = len(examples[\"question\"])\n",
+        "finetuning_dataset = []\n",
+        "\n",
+        "for i in range(num_examples):\n",
+        "  question = examples[\"question\"][i]\n",
+        "  answer = examples[\"answer\"][i]\n",
+        "  text_with_prompt_template = prompt_template.format(question=question)\n",
+        "  finetuning_dataset.append({\"question\": text_with_prompt_template, \"answer\": answer})\n",
+        "\n",
+        "#Data Example:\n",
+        "print(\"One datapoint in the finetuning dataset:\")\n",
+        "pprint(finetuning_dataset[0])"
+      ],
+      "metadata": {
+        "id": "CStX3y5lkMR9"
+      },
+      "id": "CStX3y5lkMR9",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "6ab0789b",
+      "metadata": {
+        "id": "6ab0789b"
+      },
+      "source": [
+        "#### Step 4: Tokenize the instruction dataset"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "**A single example :**"
+      ],
+      "metadata": {
+        "id": "v3ltTvUPkuBb"
+      },
+      "id": "v3ltTvUPkuBb"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "b4c320ab",
+      "metadata": {
+        "id": "b4c320ab"
+      },
+      "outputs": [],
+      "source": [
+        "text = finetuning_dataset[0][\"question\"] + finetuning_dataset[0][\"answer\"]\n",
+        "\n",
+        "tokenized_inputs = tokenizer(text,\n",
+        "                             return_tensors=\"np\", #return output as numpy array\n",
+        "                             padding=True\n",
+        "                             )\n",
+        "print('Tokenized data example with prompt: \\n',tokenized_inputs[\"input_ids\"])"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "1674bc66",
+      "metadata": {
+        "id": "1674bc66"
+      },
+      "outputs": [],
+      "source": [
+        "#Define Truncation Requirements:\n",
+        "\n",
+        "max_length = 2048 #Model limitation\n",
+        "max_length = min(tokenized_inputs[\"input_ids\"].shape[1],\n",
+        "                 max_length)\n",
+        "\n",
+        "tokenized_inputs = tokenizer(text,\n",
+        "                             return_tensors=\"np\",\n",
+        "                             truncation=True,\n",
+        "                             max_length=max_length,\n",
+        "                             padding=True)\n",
+        "#print('Tokenized data example with prompt: \\n',tokenized_inputs[\"input_ids\"])"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "ad4c8c54",
+      "metadata": {
+        "id": "ad4c8c54"
+      },
+      "source": [
+        "**Tokenize the instruction dataset :**"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#define tokenize function:\n",
+        "def tokenize_function(examples):\n",
+        "\n",
+        "  prompt_template = \"\"\"### Question:\n",
+        "{question}\n",
+        "\n",
+        "### Answer:\"\"\"\n",
+        "  text_with_prompt=[prompt_template.format(question=q) for q in examples['question']]\n",
+        "  examples['question']=text_with_prompt\n",
+        "\n",
+        "  tokenizer.pad_token=tokenizer.eos_token\n",
+        "  # tokenized_input=tokenizer(text_with_prompt,\n",
+        "  #                           return_tensors='np',\n",
+        "  #                           padding=True\n",
+        "  #                           )\n",
+        "  # max_length=min(tokenized_input.shape[1],2048)\n",
+        "\n",
+        "  tokenizer.truncation_side='right'\n",
+        "  tokenized_input=tokenizer(text_with_prompt,\n",
+        "                            #return_tensors='np',\n",
+        "                            padding=True,\n",
+        "                            truncation=True,\n",
+        "                            max_length=2048 #max_length\n",
+        "                            )\n",
+        "  tokenized_input['labels']=tokenized_input['input_ids'].copy()\n",
+        "  return tokenized_input\n"
+      ],
+      "metadata": {
+        "id": "Jvjiyg1coMrO"
+      },
+      "id": "Jvjiyg1coMrO",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "finetuning_dataset_loaded = datasets.load_dataset(filename, split=\"train\")\n",
+        "\n",
+        "finetuning_dataset_loaded = finetuning_dataset_loaded.remove_columns(\n",
+        "    [col for col in finetuning_dataset_loaded.column_names if col not in [\"question\", \"answer\"]])\n",
+        "\n",
+        "# Apply function to each example/batch of examples in the dataset\n",
+        "tokenized_dataset = finetuning_dataset_loaded.map(\n",
+        "    tokenize_function,\n",
+        "    batched=True, #call the function by a batch of examples at once\n",
+        "    batch_size=32, #define batch size, usually 32\n",
+        "    drop_last_batch=True # If the total number of examples isn't divisible by batch_size, the last partial batch is dropped\n",
+        ")"
+      ],
+      "metadata": {
+        "id": "tUcgGwhqpTY1"
+      },
+      "id": "tUcgGwhqpTY1",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Data Example--Input:\n",
+        "finetuning_dataset_loaded[0]"
+      ],
+      "metadata": {
+        "id": "qt81eNmprnFO"
+      },
+      "id": "qt81eNmprnFO",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Data Example--Output:\n",
+        "tokenized_dataset[0]"
+      ],
+      "metadata": {
+        "id": "MV9aNIgdrSY3"
+      },
+      "id": "MV9aNIgdrSY3",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "4918320f",
+      "metadata": {
+        "id": "4918320f"
+      },
+      "source": [
+        "#### Step 5: Prepare test/train splits"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "aa77e06e",
+      "metadata": {
+        "id": "aa77e06e"
+      },
+      "outputs": [],
+      "source": [
+        "split_dataset = tokenized_dataset.train_test_split(test_size=0.1, shuffle=True, seed=123)\n",
+        "print(split_dataset)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "c73ea8f8",
+      "metadata": {
+        "id": "c73ea8f8"
+      },
+      "source": [
+        "#### Other datasets to try"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "a3c9fea2",
+      "metadata": {
+        "id": "a3c9fea2"
+      },
+      "outputs": [],
+      "source": [
+        "# finetuning_dataset_path = \"lamini/lamini_docs\"\n",
+        "# finetuning_dataset = datasets.load_dataset(finetuning_dataset_path)\n",
+        "# print(finetuning_dataset)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "cc5cb28e",
+      "metadata": {
+        "id": "cc5cb28e"
+      },
+      "outputs": [],
+      "source": [
+        "# taylor_swift_dataset = \"lamini/taylor_swift\"\n",
+        "# bts_dataset = \"lamini/bts\"\n",
+        "# open_llms = \"lamini/open_llms\""
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "f28cef5d",
+      "metadata": {
+        "id": "f28cef5d"
+      },
+      "outputs": [],
+      "source": [
+        "# dataset_swiftie = datasets.load_dataset(taylor_swift_dataset)\n",
+        "# print(dataset_swiftie[\"train\"][1])"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "26f7c645",
+      "metadata": {
+        "id": "26f7c645"
+      },
+      "source": [
+        "### Model Training"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Environment Setup"
+      ],
+      "metadata": {
+        "id": "ZXbBduruYyTl"
+      },
+      "id": "ZXbBduruYyTl"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "3fdf34b7",
+      "metadata": {
+        "id": "3fdf34b7"
+      },
+      "outputs": [],
+      "source": [
+        "import datasets\n",
+        "import tempfile\n",
+        "import logging\n",
+        "import random\n",
+        "# import config\n",
+        "import os\n",
+        "import yaml\n",
+        "import time\n",
+        "import torch\n",
+        "import transformers\n",
+        "import pandas as pd\n",
+        "import jsonlines\n",
+        "from pprint import pprint\n",
+        "\n",
+        "# from utilities import *\n",
+        "from transformers import AutoTokenizer\n",
+        "from transformers import AutoModelForCausalLM\n",
+        "from transformers import Trainer, TrainingArguments\n",
+        "from transformers import AutoModelForCausalLM\n",
+        "\n",
+        "from datasets import load_dataset\n",
+        "\n",
+        "\n",
+        "logger = logging.getLogger(__name__)\n",
+        "global_config = None"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "84afec4f",
+      "metadata": {
+        "id": "84afec4f"
+      },
+      "source": [
+        "Load the Lamini docs dataset:\n",
+        "\n",
+        "**Dataset**: https://huggingface.co/datasets/lamini/lamini_docs\n",
+        "\n",
+        "**Introduction**: Including Q&A examples, input_ids, attention_mask, and labels."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "a50c1f96",
+      "metadata": {
+        "id": "a50c1f96"
+      },
+      "outputs": [],
+      "source": [
+        "dataset_path = \"lamini/lamini_docs\""
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "66bdd766",
+      "metadata": {
+        "id": "66bdd766"
+      },
+      "source": [
+        "Set up the model, training config, and tokenizer:\n",
+        "\n",
+        "**Web Link**: https://huggingface.co/EleutherAI/pythia-70m?utm_source=chatgpt.com\n",
+        "\n",
+        "**Introduction**:The Pythia Scaling Suite is a collection of models developed to facilitate interpretability [research](https://arxiv.org/pdf/2304.01373). It contains two sets of eight models of sizes 70M, 160M, 410M, 1B, 1.4B, 2.8B, 6.9B, and 12B"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "1d5204b4",
+      "metadata": {
+        "id": "1d5204b4"
+      },
+      "outputs": [],
+      "source": [
+        "model_name = \"EleutherAI/pythia-70m\""
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "81716952",
+      "metadata": {
+        "id": "81716952"
+      },
+      "outputs": [],
+      "source": [
+        "# training_config = {\n",
+        "#     \"model\": {\n",
+        "#         \"pretrained_name\": model_name,\n",
+        "#         \"max_length\" : 2048\n",
+        "#     },\n",
+        "#     \"datasets\": {\n",
+        "#         \"use_hf\": use_hf,\n",
+        "#         \"path\": dataset_path\n",
+        "#     },\n",
+        "#     \"verbose\": True\n",
+        "# }"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "6b113545",
+      "metadata": {
+        "id": "6b113545"
+      },
+      "outputs": [],
+      "source": [
+        "tokenizer = AutoTokenizer.from_pretrained(model_name) #Loads tokenizer from Hugging Face\n",
+        "tokenizer.pad_token = tokenizer.eos_token #Set the padding token to be end-of-sequence (EOS) token\n",
+        "dataset = load_dataset(dataset_path)\n",
+        "train_dataset, test_dataset = dataset['train'], dataset['test']\n",
+        "\n",
+        "\n",
+        "# Use the previous defined tokenize_function with instruction:\n",
+        "# train_dataset = train_dataset.map(tokenize_function,\n",
+        "#                                   batched=True,\n",
+        "#                                   batch_size=1,\n",
+        "#                                   drop_last_batch=True\n",
+        "#                                   )\n",
+        "# test_dataset = test_dataset.map(tokenize_function,\n",
+        "#                                 batched=True,\n",
+        "#                                 batch_size=1,\n",
+        "#                                 drop_last_batch=True\n",
+        "#                                 )\n",
+        "\n",
+        "#Dataset already has instruction, can direct?\n",
+        "\n",
+        "#Convert data to torch.int64 format\n",
+        "train_dataset.set_format(type=\"torch\", columns=[\"input_ids\", \"attention_mask\", \"labels\"])\n",
+        "test_dataset.set_format(type=\"torch\", columns=[\"input_ids\", \"attention_mask\", \"labels\"])\n",
+        "train_dataset = train_dataset.filter(lambda x: len(x[\"input_ids\"]) > 0)\n",
+        "test_dataset = test_dataset.filter(lambda x: len(x[\"input_ids\"]) > 0)\n",
+        "\n",
+        "\n",
+        "print(train_dataset)\n",
+        "print(test_dataset)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "batch = next(iter(trainer.get_train_dataloader()))\n",
+        "print({k: v.dtype for k, v in batch.items()})"
+      ],
+      "metadata": {
+        "id": "s3nq_t8l3SQm"
+      },
+      "id": "s3nq_t8l3SQm",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "train_dataset.set_format(\"torch\", columns=[\"input_ids\", \"attention_mask\", \"labels\"])\n",
+        "test_dataset.set_format(\"torch\", columns=[\"input_ids\", \"attention_mask\", \"labels\"])"
+      ],
+      "metadata": {
+        "id": "ktoQedLZx8Az"
+      },
+      "id": "ktoQedLZx8Az"
+    },
+    {
+      "cell_type": "markdown",
+      "id": "20661c62",
+      "metadata": {
+        "id": "20661c62"
+      },
+      "source": [
+        "#### Load Base Model"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "1ad86481",
+      "metadata": {
+        "id": "1ad86481"
+      },
+      "outputs": [],
+      "source": [
+        "base_model = AutoModelForCausalLM.from_pretrained(model_name)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "3f470887",
+      "metadata": {
+        "id": "3f470887"
+      },
+      "outputs": [],
+      "source": [
+        "#Checks how many CUDA-compatible GPUs:\n",
+        "device_count = torch.cuda.device_count()\n",
+        "\n",
+        "#Set device to use: CUDA or CPU\n",
+        "if device_count > 0:\n",
+        "    logger.debug(\"Select GPU device\")\n",
+        "    device = torch.device(\"cuda\")\n",
+        "else:\n",
+        "    logger.debug(\"Select CPU device\")\n",
+        "    device = torch.device(\"cpu\")"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "afcccc87",
+      "metadata": {
+        "id": "afcccc87"
+      },
+      "outputs": [],
+      "source": [
+        "#Move model to GPU/CPU\n",
+        "base_model.to(device)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "e6bebeec",
+      "metadata": {
+        "id": "e6bebeec"
+      },
+      "source": [
+        "#### Define function to carry out inference"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "46d461b8",
+      "metadata": {
+        "id": "46d461b8"
+      },
+      "outputs": [],
+      "source": [
+        "def inference(text, model, tokenizer, max_input_tokens=1000, max_output_tokens=100):\n",
+        "  # Tokenize\n",
+        "  inputs= tokenizer(text,\n",
+        "                    return_tensors=\"pt\",\n",
+        "                    truncation=True, #ensures text won’t exceed max_input_tokens\n",
+        "                    max_length=max_input_tokens,\n",
+        "                    padding=False #added\n",
+        "                    )\n",
+        "  #Using tokenizer instead of tokenizer.encode to generate attention_mask automatically\n",
+        "\n",
+        "  # Generate\n",
+        "  device = model.device\n",
+        "  generated_tokens_with_prompt = model.generate(input_ids=inputs['input_ids'].to(device),\n",
+        "                                                attention_mask=inputs['attention_mask'].to(device),\n",
+        "                                                max_length=max_output_tokens,\n",
+        "                                                pad_token_id=tokenizer.pad_token_id\n",
+        "                                                )\n",
+        "\n",
+        "  # Decode\n",
+        "  generated_text_with_prompt = tokenizer.batch_decode(generated_tokens_with_prompt, skip_special_tokens=True)\n",
+        "\n",
+        "  # Strip the prompt\n",
+        "  generated_text_answer = generated_text_with_prompt[0][len(text):]\n",
+        "\n",
+        "  return generated_text_answer"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "4c312738",
+      "metadata": {
+        "id": "4c312738"
+      },
+      "source": [
+        "#### Try Base Model Result"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "5c9f4307",
+      "metadata": {
+        "id": "5c9f4307"
+      },
+      "outputs": [],
+      "source": [
+        "test_text = test_dataset[0]['question']\n",
+        "test_attention_mask=test_dataset[0]['attention_mask']\n",
+        "print(\"Question input (test):\\n\", test_text)\n",
+        "print(f\"Correct answer from Lamini docs:\")\n",
+        "pprint(test_dataset[0]['answer'])\n",
+        "print(\"\\nModel's answer: \")\n",
+        "print(inference(test_text, base_model, tokenizer))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "32bc6275",
+      "metadata": {
+        "id": "32bc6275"
+      },
+      "source": [
+        "#### Training Setup"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "ecaf5f7e",
+      "metadata": {
+        "id": "ecaf5f7e"
+      },
+      "outputs": [],
+      "source": [
+        "#Define maximum train data interations\n",
+        "max_steps = 240\n",
+        "\n",
+        "#Set fine-tunned model name\n",
+        "trained_model_name = f\"lamini_docs_{max_steps}_steps\"\n",
+        "output_dir = trained_model_name"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "02ef1ff0",
+      "metadata": {
+        "id": "02ef1ff0"
+      },
+      "outputs": [],
+      "source": [
+        "#Model Training: using Hugging Face transformers library\n",
+        "training_args = TrainingArguments(learning_rate=1.0e-5, # Learning rate\n",
+        "                                  num_train_epochs=1, # Number of training epochs; one full pass through entire training data\n",
+        "                                  max_steps=max_steps, # 1 step is one parameter update\n",
+        "                                                       # Max steps to train for\n",
+        "                                                       # Overrides num_train_epochs, if not -1\n",
+        "\n",
+        "                                  per_device_train_batch_size=1,# Batch size for training\n",
+        "                                  gradient_accumulation_steps = 4, #Accumulate gradients across 4 steps before updating weights (simulate large batch size)\n",
+        "                                  output_dir=output_dir,# Directory to save model checkpoints\n",
+        "\n",
+        "                                  # Other arguments\n",
+        "                                  overwrite_output_dir=False, # Overwrite the content of the output directory\n",
+        "                                  disable_tqdm=False, # Keep progress bar visible during training\n",
+        "                                  eval_steps=10, # Run evaluation every x steps\n",
+        "                                  save_steps=120, # Save a checkproint every x steps\n",
+        "                                  warmup_steps=0, # Number of warmup steps for learning rate scheduler\n",
+        "                                  per_device_eval_batch_size=1, # Batch size for evaluation\n",
+        "                                  eval_strategy=\"steps\", #Run evaluation at every evaluation steps (/'epoch'/'no')\n",
+        "                                  logging_strategy=\"steps\", #Log and write training logs at every x=logging_steps steps\n",
+        "                                  logging_steps=1,\n",
+        "                                  optim=\"adafactor\", #Use Adafactor optimizer (memory-efficient, good for large models)\n",
+        "                                  gradient_checkpointing=False,\n",
+        "\n",
+        "                                  # Parameters for early stopping\n",
+        "                                  load_best_model_at_end=True, #reload checkpoint with the lowest evaluation loss\n",
+        "                                  save_total_limit=1,#Keep only 1 saves checkpoint (Save disk space)\n",
+        "\n",
+        "                                  # Evaluation metrics: smaller is better\n",
+        "                                  metric_for_best_model=\"eval_loss\",\n",
+        "                                  greater_is_better=False\n",
+        ")"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "ea9d96f4",
+      "metadata": {
+        "id": "ea9d96f4"
+      },
+      "outputs": [],
+      "source": [
+        "#Using Hugging Face Trainer API to setup training\n",
+        "trainer = Trainer(model=base_model,\n",
+        "                  args=training_args,\n",
+        "                  train_dataset=train_dataset,\n",
+        "                  eval_dataset=test_dataset,\n",
+        ")"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "f1de4bd9",
+      "metadata": {
+        "id": "f1de4bd9"
+      },
+      "source": [
+        "#### Model Training"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "6ab6f5ff",
+      "metadata": {
+        "id": "6ab6f5ff"
+      },
+      "outputs": [],
+      "source": [
+        "training_output = trainer.train()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "a85b793e",
+      "metadata": {
+        "id": "a85b793e"
+      },
+      "source": [
+        "#### Save Model to Local"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "27a79b1b",
+      "metadata": {
+        "id": "27a79b1b"
+      },
+      "outputs": [],
+      "source": [
+        "save_dir = f'{output_dir}/Finetuned_model'\n",
+        "\n",
+        "trainer.save_model(save_dir)\n",
+        "print(\"Saved model to:\", save_dir)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "77850200",
+      "metadata": {
+        "id": "77850200"
+      },
+      "source": [
+        "#### Run Fine-tuned Model Version 1"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "915cefdd",
+      "metadata": {
+        "id": "915cefdd"
+      },
+      "outputs": [],
+      "source": [
+        "#Load the local model from saved folder\n",
+        "finetuned_model_v1 = AutoModelForCausalLM.from_pretrained(save_dir,\n",
+        "                                                                local_files_only=True)\n",
+        "finetuned_model_v1.to(device)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "test_text = test_dataset[0]['question']\n",
+        "test_attention_mask=test_dataset[0]['attention_mask']\n",
+        "print(\"Question input (test):\\n\", test_text)\n",
+        "print(f\"Correct answer from Lamini docs:\")\n",
+        "pprint(test_dataset[0]['answer'])\n",
+        "print(\"\\nModel's answer: \")\n",
+        "pprint(inference(test_text, finetuned_model_v1, tokenizer))"
+      ],
+      "metadata": {
+        "id": "LxAOA4Xns1uB"
+      },
+      "id": "LxAOA4Xns1uB",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "c1d52885",
+      "metadata": {
+        "id": "c1d52885"
+      },
+      "source": [
+        "#### Run Fine-tunned Model Version 2\n",
+        "Note: Same model trained for two epochs"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Set fine-tunned model name\n",
+        "trained_model_name = f\"lamini_docs_two_epochs\"\n",
+        "output_dir = trained_model_name\n",
+        "\n",
+        "\n",
+        "#Model Training: using Hugging Face transformers library\n",
+        "training_args = TrainingArguments(learning_rate=1.0e-5, # Learning rate\n",
+        "                                  num_train_epochs=2, # Number of training epochs; one full pass through entire training data\n",
+        "                                  max_steps=-1, # 1 step is one parameter update\n",
+        "                                                       # Max steps to train for\n",
+        "                                                       # Overrides num_train_epochs, if not -1\n",
+        "\n",
+        "                                  per_device_train_batch_size=1,# Batch size for training\n",
+        "                                  gradient_accumulation_steps = 4, #Accumulate gradients across 4 steps before updating weights (simulate large batch size)\n",
+        "                                  output_dir=output_dir,# Directory to save model checkpoints\n",
+        "\n",
+        "                                  # Other arguments\n",
+        "                                  overwrite_output_dir=False, # Overwrite the content of the output directory\n",
+        "                                  disable_tqdm=False, # Keep progress bar visible during training\n",
+        "                                  eval_steps=20, # Run evaluation every x steps\n",
+        "                                  save_steps=120, # Save a checkproint every x steps\n",
+        "                                  warmup_steps=0, # Number of warmup steps for learning rate scheduler\n",
+        "                                  per_device_eval_batch_size=1, # Batch size for evaluation\n",
+        "                                  eval_strategy=\"steps\", #Run evaluation at every evaluation steps (/'epoch'/'no')\n",
+        "                                  logging_strategy=\"steps\", #Log and write training logs at every x=logging_steps steps\n",
+        "                                  logging_steps=1,\n",
+        "                                  optim=\"adafactor\", #Use Adafactor optimizer (memory-efficient, good for large models)\n",
+        "                                  gradient_checkpointing=False,\n",
+        "\n",
+        "                                  # Parameters for early stopping\n",
+        "                                  load_best_model_at_end=True, #reload checkpoint with the lowest evaluation loss\n",
+        "                                  save_total_limit=1,#Keep only 1 saves checkpoint (Save disk space)\n",
+        "\n",
+        "                                  # Evaluation metrics: smaller is better\n",
+        "                                  metric_for_best_model=\"eval_loss\",\n",
+        "                                  greater_is_better=False\n",
+        ")\n",
+        "\n",
+        "#Using Hugging Face Trainer API to setup training\n",
+        "trainer = Trainer(model=base_model,\n",
+        "                  args=training_args,\n",
+        "                  train_dataset=train_dataset,\n",
+        "                  eval_dataset=test_dataset,\n",
+        ")"
+      ],
+      "metadata": {
+        "id": "4lx1D60ytlCw"
+      },
+      "id": "4lx1D60ytlCw",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "training_output = trainer.train()"
+      ],
+      "metadata": {
+        "collapsed": true,
+        "id": "vMo5ehYBt8-z"
+      },
+      "id": "vMo5ehYBt8-z",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "save_dir = f'{output_dir}/Finetuned_model'\n",
+        "\n",
+        "trainer.save_model(save_dir)\n",
+        "print(\"Saved model to:\", save_dir)"
+      ],
+      "metadata": {
+        "id": "JdHrojKlt_7t"
+      },
+      "id": "JdHrojKlt_7t",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Load the local model from saved folder\n",
+        "finetuned_model_v2 = AutoModelForCausalLM.from_pretrained(save_dir,\n",
+        "                                                          local_files_only=True)\n",
+        "finetuned_model_v2.to(device)"
+      ],
+      "metadata": {
+        "id": "r_fiUT-lufVi"
+      },
+      "id": "r_fiUT-lufVi",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "dataset = load_dataset(dataset_path)\n",
+        "test_dataset = dataset['test']"
+      ],
+      "metadata": {
+        "id": "4Rdy0Ylx65MK"
+      },
+      "id": "4Rdy0Ylx65MK",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "test_text = test_dataset[0]['question']\n",
+        "test_attention_mask=test_dataset[0]['attention_mask']\n",
+        "print(\"Question input (test):\\n\", test_text)\n",
+        "print(f\"Correct answer from Lamini docs:\")\n",
+        "pprint(test_dataset[0]['answer'])\n",
+        "print(\"\\nModel's answer: \")\n",
+        "pprint(inference(test_text, finetuned_model_v2, tokenizer))"
+      ],
+      "metadata": {
+        "id": "tkPXM7EnufQv"
+      },
+      "id": "tkPXM7EnufQv",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "frc44XLoufCj"
+      },
+      "id": "frc44XLoufCj",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "96bb3285",
+      "metadata": {
+        "id": "96bb3285"
+      },
+      "source": [
+        "#### Run much larger Fine-tunned model"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "b5ef0552",
+      "metadata": {
+        "id": "b5ef0552"
+      },
+      "outputs": [],
+      "source": [
+        "finetuned_longer_model = AutoModelForCausalLM.from_pretrained(\"lamini/lamini_docs_finetuned\")\n",
+        "tokenizer = AutoTokenizer.from_pretrained(\"lamini/lamini_docs_finetuned\")\n",
+        "\n",
+        "test_text = test_dataset[0]['question']\n",
+        "test_attention_mask=test_dataset[0]['attention_mask']\n",
+        "print(\"Question input (test):\\n\", test_text)\n",
+        "print(f\"Correct answer from Lamini docs:\")\n",
+        "pprint(test_dataset[0]['answer'])\n",
+        "print(\"\\nModel's answer: \")\n",
+        "pprint(inference(test_text, finetuned_longer_model, tokenizer))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "e8a33d49",
+      "metadata": {
+        "id": "e8a33d49"
+      },
+      "source": [
+        "##### Explore moderation using small model\n",
+        "\n",
+        "First, try the non-finetuned base model:"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "dd3bebef",
+      "metadata": {
+        "id": "dd3bebef"
+      },
+      "outputs": [],
+      "source": [
+        "base_tokenizer = AutoTokenizer.from_pretrained(\"EleutherAI/pythia-70m\")\n",
+        "base_model = AutoModelForCausalLM.from_pretrained(\"EleutherAI/pythia-70m\")\n",
+        "print(inference(\"What do you think of Mars?\", base_model, base_tokenizer))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "4b62ad60",
+      "metadata": {
+        "id": "4b62ad60"
+      },
+      "source": [
+        "Now try moderation with finetuned small model:"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "1e1d74b1",
+      "metadata": {
+        "id": "1e1d74b1"
+      },
+      "outputs": [],
+      "source": [
+        "pprint(inference(\"What do you think of Mars?\", finetuned_longer_model, tokenizer))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "fa404373",
+      "metadata": {
+        "id": "fa404373"
+      },
+      "source": [
+        "###  Model Evaluation"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "0101f82b",
+      "metadata": {
+        "id": "0101f82b"
+      },
+      "source": [
+        "#### Setup basic evaluation function--Exact Match"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "5f3a592a",
+      "metadata": {
+        "id": "5f3a592a"
+      },
+      "outputs": [],
+      "source": [
+        "def is_exact_match(a, b):\n",
+        "    return a.strip() == b.strip()\n",
+        "#Need to be exact match"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#base_model.eval()"
+      ],
+      "metadata": {
+        "id": "BtoSdh7o-U-d"
+      },
+      "id": "BtoSdh7o-U-d",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "a06fb78b",
+      "metadata": {
+        "id": "a06fb78b"
+      },
+      "source": [
+        "##### Run model and compare to expected answer"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "gen_answer_base=inference(test_dataset[0]['question'], base_model, tokenizer)\n",
+        "gen_answer_v1=inference(test_dataset[0]['question'], finetuned_model_v1, tokenizer)\n",
+        "gen_answer_v2=inference(test_dataset[0]['question'], finetuned_model_v2, tokenizer)"
+      ],
+      "metadata": {
+        "id": "1dn1MxDD9ZTY"
+      },
+      "id": "1dn1MxDD9ZTY",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print('Base: ',is_exact_match(gen_answer_base,test_dataset[0]['answer']))\n",
+        "print('Model V1: ',is_exact_match(gen_answer_v1,test_dataset[0]['answer']))\n",
+        "print('Model V2: ',is_exact_match(gen_answer_v2,test_dataset[0]['answer']))"
+      ],
+      "metadata": {
+        "id": "feMSHQ8i9u9Y"
+      },
+      "id": "feMSHQ8i9u9Y",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "#### Other Evaluation Method"
+      ],
+      "metadata": {
+        "id": "2GLEBXM4Crqt"
+      },
+      "id": "2GLEBXM4Crqt"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import evaluate\n",
+        "rouge= evaluate.load(\"rouge\")"
+      ],
+      "metadata": {
+        "id": "Lo3IJflRCu29"
+      },
+      "id": "Lo3IJflRCu29",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def f1_score(prediction: str, reference: str) -> float:\n",
+        "    pred_tokens = prediction.split()\n",
+        "    ref_tokens = reference.split()\n",
+        "\n",
+        "    common = set(pred_tokens) & set(ref_tokens)\n",
+        "    if len(common) == 0:\n",
+        "        return 0.0\n",
+        "\n",
+        "    precision = len(common) / len(pred_tokens)\n",
+        "    recall = len(common) / len(ref_tokens)\n",
+        "    f1 = 2 * precision * recall / (precision + recall)\n",
+        "    return f1"
+      ],
+      "metadata": {
+        "id": "_izq1k73Hfp-"
+      },
+      "id": "_izq1k73Hfp-",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print('finetuned_model_v2:')\n",
+        "print(\"ROUGE:\", rouge.compute(predictions=predictions['predicted_answer'].to_list(),\n",
+        "                              references=predictions['target_answer'].to_list()))\n",
+        "print(\"F1:\", f1.compute(predictions=predictions['predicted_answer'].to_list(),\n",
+        "                        references=predictions['target_answer'].to_list(),\n",
+        "                        average=\"macro\"))"
+      ],
+      "metadata": {
+        "id": "4yILouk9EvqH"
+      },
+      "id": "4yILouk9EvqH",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "7a623146",
+      "metadata": {
+        "id": "7a623146"
+      },
+      "source": [
+        "#### Evaluate on entire test dataset"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def func_evaluations(n,test_dataset,model):\n",
+        "  n = 20\n",
+        "  metrics = {'exact_matches': [],\n",
+        "             'rouge':[],\n",
+        "             'f1':[]}\n",
+        "  predictions = []\n",
+        "\n",
+        "  for i, item in enumerate(test_dataset): #tqdm(enumerate(test_dataset)):\n",
+        "    # if i%5==0:\n",
+        "    #   print(i,\" Evaluating: \" + str(item))\n",
+        "    question = item['question']\n",
+        "    answer = item['answer']\n",
+        "\n",
+        "    try:\n",
+        "      predicted_answer = inference(question, model, tokenizer)\n",
+        "    except:\n",
+        "      continue\n",
+        "\n",
+        "    predictions.append([predicted_answer, answer])\n",
+        "\n",
+        "    #fixed: exact_match = is_exact_match(generated_answer, answer)\n",
+        "    exact_match = is_exact_match(predicted_answer,answer)\n",
+        "    rouge_num=rouge.compute(predictions=[predicted_answer],\n",
+        "                            references=[answer])\n",
+        "    f1_num=f1_score(prediction=predicted_answer,\n",
+        "                    reference=answer)\n",
+        "\n",
+        "    metrics['exact_matches'].append(exact_match)\n",
+        "    metrics['rouge'].append(rouge_num)\n",
+        "    metrics['f1'].append(f1_num)\n",
+        "\n",
+        "    if i >= n: #(and n != -1):\n",
+        "      break\n",
+        "\n",
+        "  predictions_df=pd.DataFrame(predictions, columns=[\"predicted_answer\", \"target_answer\"])\n",
+        "  return metrics, predictions_df"
+      ],
+      "metadata": {
+        "id": "ib1wid_nJfDS"
+      },
+      "id": "ib1wid_nJfDS",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def print_eval(metrics,model_name):\n",
+        "  avg_scores_v2 = {}\n",
+        "  for key in metrics['rouge'][0].keys():\n",
+        "    avg_scores_v2[key] = sum(d[key] for d in metrics['rouge']) / len(metrics['rouge'])\n",
+        "  print('Evaluation for ',model_name,' :')\n",
+        "  print('Number of exact matches: ', sum(metrics['exact_matches']))\n",
+        "  print('Rouge Score: ', avg_scores_v2)\n",
+        "  print('F1 Score: ', np.mean(metrics['f1']))"
+      ],
+      "metadata": {
+        "id": "t1L7vV-aKpAJ"
+      },
+      "id": "t1L7vV-aKpAJ",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "##### Model Comparison"
+      ],
+      "metadata": {
+        "id": "ixzbKnp2LzNf"
+      },
+      "id": "ixzbKnp2LzNf"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "n=20\n",
+        "m_base,pred_base=func_evaluations(n,test_dataset,base_model)\n",
+        "m_v1,pred_v1=func_evaluations(n,test_dataset,finetuned_model_v1)\n",
+        "m_v2,pred_v2=func_evaluations(n,test_dataset,finetuned_model_v2)\n",
+        "m_large,pred_large=func_evaluations(n,test_dataset,finetuned_longer_model)"
+      ],
+      "metadata": {
+        "collapsed": true,
+        "id": "N9N29C8UKILQ"
+      },
+      "id": "N9N29C8UKILQ",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print_eval(m_base,'base_model')\n",
+        "print()\n",
+        "print_eval(m_v1,'finetuned_model_v1')\n",
+        "print()\n",
+        "print_eval(m_v2,'finetuned_model_v2')\n",
+        "print()\n",
+        "print_eval(m_large,'finetuned_longer_model')"
+      ],
+      "metadata": {
+        "id": "edcT901UK9-U"
+      },
+      "id": "edcT901UK9-U",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "pred_v2.head(2)"
+      ],
+      "metadata": {
+        "id": "5q9h0sbIBnUr"
+      },
+      "id": "5q9h0sbIBnUr",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "0141bd04",
+      "metadata": {
+        "id": "0141bd04"
+      },
+      "source": [
+        "#### Evaluate all the data"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "2cd0ac19",
+      "metadata": {
+        "id": "2cd0ac19"
+      },
+      "outputs": [],
+      "source": [
+        "evaluation_dataset_path = \"lamini/lamini_docs_evaluation\"\n",
+        "evaluation_dataset = datasets.load_dataset(evaluation_dataset_path)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "a2fb53d1",
+      "metadata": {
+        "id": "a2fb53d1",
+        "collapsed": true
+      },
+      "outputs": [],
+      "source": [
+        "pd.DataFrame(evaluation_dataset)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Index--Deeper into Transformer"
+      ],
+      "metadata": {
+        "id": "fcOnGFldyU7F"
+      },
+      "id": "fcOnGFldyU7F"
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Check about the shape of input and output"
+      ],
+      "metadata": {
+        "id": "o_Sp45Tyynrl"
+      },
+      "id": "o_Sp45Tyynrl"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch\n",
+        "import torch.nn as nn\n",
+        "from torch.nn import functional as F\n",
+        "\n",
+        "\n",
+        "text = 'GPT, short for Generative Pre-trained Transformer, represents a groundbreaking advancement in the field of artificial intelligence and natural language processing. Developed by OpenAI, GPT is designed to understand, generate, and interpret human language with remarkable accuracy and fluency. It operates on the principle of machine learning, where the model is initially pre-trained on a vast corpus of text data. This pre-training enables GPT to grasp the intricacies of language, including grammar, context, and even subtleties like humor and sarcasm. Following the pre-training phase, GPT undergoes fine-tuning, where it is further trained on a smaller, more specialized dataset to perform specific tasks like translation, question-answering, and content creation. What sets GPT apart is its deep learning architecture, which consists of multiple layers of transformers—hence the name. These transformers allow the model to process and analyze text in a highly efficient and nuanced manner, making GPT capable of generating text that is often indistinguishable from that written by humans. As technology evolves, GPT continues to push the boundaries of what artificial intelligence can achieve in understanding and mimicking human language.'\n",
+        "\n",
+        "chars = sorted(list(set(text)))\n",
+        "vocab_size = len(chars)\n",
+        "print(\"Characters from the sentence:\", \"\".join(chars))\n",
+        "print(\"vocab_size from the sentence: \", vocab_size)\n",
+        "stoi = { ch:i for i,ch in enumerate(chars) }\n",
+        "itos = { i:ch for i,ch in enumerate(chars) }\n",
+        "encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers\n",
+        "decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string\n",
+        "data = torch.tensor(encode(text), dtype=torch.long)\n",
+        "train_data = data\n",
+        "\n",
+        "def get_batch():\n",
+        "    # generate a small batch of data of inputs x and targets y\n",
+        "    data = train_data\n",
+        "    ix = torch.randint(len(data) - block_size, (batch_size,))\n",
+        "    x = torch.stack([data[i:i+block_size] for i in ix])\n",
+        "    y = torch.stack([data[i+1:i+block_size+1] for i in ix])\n",
+        "    return x, y\n",
+        "\n",
+        "# hyperparameters\n",
+        "batch_size = 16 # how many independent sequences will we process in parallel?\n",
+        "block_size = len(data) - 1 # what is the maximum context length for predictions?\n",
+        "# block_size = 192 # what is the maximum context length for predictions?\n",
+        "device = 'cuda' if torch.cuda.is_available() else 'cpu'\n",
+        "\n",
+        "n_embd = 1500\n",
+        "n_head = 1\n",
+        "n_layer = 4\n",
+        "dropout = 0.0\n",
+        "# ------------\n",
+        "\n",
+        "torch.manual_seed(1337)\n",
+        "\n",
+        "class Head(nn.Module):\n",
+        "    \"\"\" one head of self-attention \"\"\"\n",
+        "\n",
+        "    def __init__(self, head_size):\n",
+        "        super().__init__()   # head_size = 150\n",
+        "        self.key = nn.Linear(n_embd, head_size, bias=False)   # x  ->  embedding size ->  n_head * head_size\n",
+        "        self.query = nn.Linear(n_embd, head_size, bias=False)\n",
+        "        self.value = nn.Linear(n_embd, head_size, bias=False)\n",
+        "        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))\n",
+        "\n",
+        "        self.dropout = nn.Dropout(dropout)\n",
+        "\n",
+        "    def forward(self, x):  # head_size = 150 * n_head 10\n",
+        "        B,T,C = x.shape  # batch_size, seq_len, embedding_size   (4, 100, 1500)\n",
+        "        k = self.key(x)   # (B,T,C)  (4, 100, 1500) * (1500, 150) -> (4, 100, 150)\n",
+        "        q = self.query(x) # (B,T,C)  (4, 100, 1500) * (1500, 150) -> (4, 100, 150)\n",
+        "        # compute attention scores (\"affinities\")\n",
+        "        wei = q @ k.transpose(-2,-1) * C**-0.5 # (B, T, C) @ (B, C, T) -> (B, T, T)  （4, 100, 150) * (4, 150, 100) -> (4, 100, 100)\n",
+        "             # you are the best\n",
+        "        # you  11  21   23  23\n",
+        "        # are\n",
+        "        # the\n",
+        "        # best\n",
+        "        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)  (4, 100, 100)\n",
+        "        wei = F.softmax(wei, dim=-1) # (B, T, T)\n",
+        "        wei = self.dropout(wei)\n",
+        "        # perform the weighted aggregation of the values\n",
+        "        v = self.value(x) # (B,T,C)  (4, 100, 100) * (100, 1500) -> (4, 100, 150)\n",
+        "        out = wei @ v # (B, T, T) @ (B, T, C) -> (B, T, C)\n",
+        "        return out\n",
+        "\n",
+        "class MultiHeadAttention(nn.Module):\n",
+        "    \"\"\" multiple heads of self-attention in parallel \"\"\"\n",
+        "\n",
+        "    def __init__(self, num_heads, head_size):\n",
+        "        super().__init__()\n",
+        "        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])\n",
+        "        self.proj = nn.Linear(n_embd, n_embd)\n",
+        "        self.dropout = nn.Dropout(dropout)  # n_head * head_size\n",
+        "\n",
+        "    def forward(self, x):\n",
+        "        out = torch.cat([h(x) for h in self.heads], dim=-1)      # [1],[2],[3]  -> [1,2,3]  # (4, 100, 150) * 10 -> (4, 100, 1500) -> batch, seq_length, embedding_size\n",
+        "        out = self.dropout(self.proj(out))\n",
+        "        return out\n",
+        "\n",
+        "class FeedFoward(nn.Module):\n",
+        "    \"\"\" a simple linear layer followed by a non-linearity \"\"\"\n",
+        "\n",
+        "    def __init__(self, n_embd):\n",
+        "        super().__init__()\n",
+        "        self.net = nn.Sequential(\n",
+        "            nn.Linear(n_embd, 4 * n_embd),   # 64 -> 256   信息 -> 维度升高\n",
+        "            nn.ReLU(),                  # 激活函数      取出强烈的信息\n",
+        "            nn.Linear(4 * n_embd, n_embd),   # 信息维度降低\n",
+        "            nn.Dropout(dropout),\n",
+        "        )\n",
+        "\n",
+        "    def forward(self, x):\n",
+        "        return self.net(x)\n",
+        "\n",
+        "class Block(nn.Module):\n",
+        "    \"\"\" Transformer block: communication followed by computation \"\"\"\n",
+        "\n",
+        "    def __init__(self, n_embd, n_head):\n",
+        "        # n_embd: embedding dimension, n_head: the number of heads we'd like\n",
+        "        super().__init__()\n",
+        "        head_size = n_embd // n_head\n",
+        "        self.sa = MultiHeadAttention(n_head, head_size)  # 提取信息\n",
+        "        self.ffwd = FeedFoward(n_embd)  # GPT感知信息\n",
+        "        self.ln1 = nn.LayerNorm(n_embd)  # 归一化\n",
+        "        self.ln2 = nn.LayerNorm(n_embd)\n",
+        "\n",
+        "    def forward(self, x):\n",
+        "        x = x + self.sa(self.ln1(x))\n",
+        "        x = x + self.ffwd(self.ln2(x))\n",
+        "        return x\n",
+        "\n",
+        "class BabyGPT(nn.Module):\n",
+        "\n",
+        "    def __init__(self):\n",
+        "        super().__init__()\n",
+        "        # each token directly reads off the logits for the next token from a lookup table\n",
+        "        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)  # 词嵌入  [0,2,5,6] -> [0.1,0.2,0,7,0.1]  n_embed\n",
+        "        self.position_embedding_table = nn.Embedding(block_size, n_embd)   #                  [0.9,0.3,0.4,0.1]\n",
+        "        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])   # transformer blocks * 4\n",
+        "        self.ln_f = nn.LayerNorm(n_embd) # final layer norm\n",
+        "        self.lm_head = nn.Linear(n_embd, vocab_size)   # 词嵌入 -> 线性层(形状变换) -> logits []  \"your name is GPT-3\" -> seq_len * [0.9,0.3,0.4,0.1] -> \"信息 -> 概率\"  -> token的概率 生成某个token的概率   [0.1, 0.1, 0.8, 0.0]\n",
+        "\n",
+        "    def forward(self, idx, targets=None):\n",
+        "        B, T = idx.shape\n",
+        "\n",
+        "        # idx and targets are both (B,T) tensor of integers m   idx + next_idx = [y], [yo],[you]\n",
+        "        tok_emb = self.token_embedding_table(idx) # (B,T,C)   batch_size * seq_len * [0.9,0.3,0.4,0.1]\n",
+        "        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)   (T,C)  (4, 100, 1500)\n",
+        "        x = tok_emb + pos_emb # (B,T,C)  # 词信息 + 位置信息 (4, 100, 1500)\n",
+        "        x = self.blocks(x) # (B,T,C)  # 信息提取 (4, 100, 1500) -> 10 * (4, 100, 150) -> (4, 100, 1500)\n",
+        "        x = self.ln_f(x) # (B,T,C)  # 归一化\n",
+        "        logits = self.lm_head(x) # (B,T,vocab_size)  # 词嵌入 -> 线性层(形状变换) -> logits(概率信息) (4, 100, 1500) * (1500, 39) -> (4, 100, 39)\n",
+        "         # I am st .. o\n",
+        "         # [ ,'a', .... , ]\n",
+        "        if targets is None:\n",
+        "            loss = None\n",
+        "        else:\n",
+        "            B, T, C = logits.shape\n",
+        "            logits = logits.view(B*T, C)\n",
+        "            targets = targets.view(B*T)\n",
+        "            loss = F.cross_entropy(logits, targets)   # 交叉熵损失函数  - 差距  - minimize 差距\n",
+        "\n",
+        "        return logits, loss\n",
+        "\n",
+        "    def generate(self, idx, max_new_tokens):   # data pre -> train model -> model serving\n",
+        "        # idx is (B, T) array of indices in the current context  # \"pre\"\n",
+        "        for _ in range(max_new_tokens):\n",
+        "            # crop idx to the last block_size tokens\n",
+        "            idx_cond = idx[:, -block_size:]\n",
+        "            # get the predictions\n",
+        "            logits, loss = self(idx_cond) # [0,3,2,4,5,6]\n",
+        "            # focus only on the last time step\n",
+        "            logits = logits[:, -1, :] # becomes (B, C) # [0.1, 0.2, 0.7]  (4, 100, 39) -> (4, 39)\n",
+        "            # apply softmax to get probabilities\n",
+        "            probs = F.softmax(logits, dim=-1) # (B, C)\n",
+        "            # sample from the distribution\n",
+        "            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)  # [0.1, 0.44, 0.46]  -> max 2  boss\n",
+        "            # append sampled index to the running sequence\n",
+        "            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)   \"pre\"  -  I am a  -> \"I am a \" + \"boss\" -> \"I am a boss\" -> model -> \"I am a boss\" -> \"I am a boss\" + \"!\" s\n",
+        "        return idx"
+      ],
+      "metadata": {
+        "id": "U31R772PyfUS"
+      },
+      "id": "U31R772PyfUS",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Test with a babyGPT"
+      ],
+      "metadata": {
+        "id": "G_oaLGsty4Bf"
+      },
+      "id": "G_oaLGsty4Bf"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "m = BabyGPT()"
+      ],
+      "metadata": {
+        "id": "OMQ_yzoey78G"
+      },
+      "id": "OMQ_yzoey78G",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch\n",
+        "from tqdm import tqdm\n",
+        "\n",
+        "batch_size = 1\n",
+        "device = 'cuda' if torch.cuda.is_available() else 'cpu'\n",
+        "m = m.to(device)\n",
+        "# create a PyTorch optimizer\n",
+        "optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)\n",
+        "\n",
+        "# 使用tqdm添加进度条，并在进度条中显示中间loss值\n",
+        "pbar = tqdm(range(500))\n",
+        "for steps in pbar:\n",
+        "    # sample a batch of data\n",
+        "    xb, yb = get_batch()\n",
+        "    xb, yb = xb.to(device), yb.to(device)\n",
+        "    # evaluate the loss\n",
+        "    logits, loss = m(xb, yb)\n",
+        "    optimizer.zero_grad(set_to_none=True)\n",
+        "    loss.backward()\n",
+        "    optimizer.step()\n",
+        "\n",
+        "    # 更新进度条的描述以显示当前的loss值\n",
+        "    pbar.set_description(f\"Loss: {loss.item():.4f}\")\n",
+        "\n",
+        "print(loss.item())"
+      ],
+      "metadata": {
+        "id": "TNAcjKfDy-iR"
+      },
+      "id": "TNAcjKfDy-iR",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "start_id = torch.tensor([encode('GPT')], dtype=torch.long)\n",
+        "start_id = start_id.to(device)\n",
+        "print(decode(m.generate(idx = start_id, max_new_tokens=200)[0].tolist()))"
+      ],
+      "metadata": {
+        "id": "Vqr6cfpFzMZS"
+      },
+      "id": "Vqr6cfpFzMZS",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Rethink about the attention mechanism"
+      ],
+      "metadata": {
+        "id": "41xSiR86zLut"
+      },
+      "id": "41xSiR86zLut"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# toy example illustrating how matrix multiplication can be used for a \"weighted aggregation\"\n",
+        "\n",
+        "\n",
+        "# you are the best\n",
+        "# 1    2    3   4\n",
+        "torch.manual_seed(42)\n",
+        "wei = torch.tril(torch.ones(7, 7))\n",
+        "wei = wei / torch.sum(wei, 1, keepdim=True)\n",
+        "b = torch.randint(0,10,(7,2)).float()\n",
+        "c = wei @ b\n",
+        "print('wei=')\n",
+        "print(wei)\n",
+        "print('--')\n",
+        "print('b=')\n",
+        "print(b)\n",
+        "print('--')\n",
+        "print('c=')\n",
+        "print(c)\n",
+        "\n",
+        "     # you are the best\n",
+        "\n",
+        "# you  11  00   00  00\n",
+        "# are  14  23   00  00\n",
+        "# the\n",
+        "# best"
+      ],
+      "metadata": {
+        "id": "MmTXQGKSzq91"
+      },
+      "id": "MmTXQGKSzq91",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# self-attention!\n",
+        "#import torch.nn as nn\n",
+        "#from torch.nn import functional as F\n",
+        "torch.manual_seed(1337)\n",
+        "B,T,C = 1,8,32 # batch, time, channels\n",
+        "x = torch.randn(B,T,C)  # (1, 8, 32)\n",
+        "\n",
+        "# let's see a single Head perform self-attention\n",
+        "head_size = 16\n",
+        "key = nn.Linear(C, head_size, bias=False)  # x -->捕捉可以当作key的信息\n",
+        "query = nn.Linear(C, head_size, bias=False) # x -->捕捉可以当作query的信息\n",
+        "value = nn.Linear(C, head_size, bias=False) # x -->捕捉可以当作value的信息\n",
+        "\n",
+        "print(key.weight)\n",
+        "print(query)\n",
+        "print(value)\n",
+        "\n",
+        "k = key(x)   # (B, T, 16)  (1, 8, 32) * (32, 16)  (1, 8, 16)\n",
+        "q = query(x) # (B, T, 16)\n",
+        "wei =  q @ k.transpose(-2, -1) # (B, T, 16) @ (B, 16, T) ---> (B, T, T)  attention score   (1, 8, 8)\n",
+        "\n",
+        "print(wei[0])\n",
+        "\n",
+        "tril = torch.tril(torch.ones(T, T))\n",
+        "#wei = torch.zeros((T,T))\n",
+        "wei = wei.masked_fill(tril == 0, float('-inf'))\n",
+        "print(\"masked:\",wei[0])\n",
+        "wei = F.softmax(wei, dim=-1)\n",
+        "print(\"masked:\",wei[0])\n",
+        "\n",
+        "v = value(x)\n",
+        "out = wei @ v\n",
+        "#out = wei @ x\n",
+        "\n",
+        "out.shape"
+      ],
+      "metadata": {
+        "id": "sg81wSQ70t_p"
+      },
+      "id": "sg81wSQ70t_p",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "wei[0]"
+      ],
+      "metadata": {
+        "id": "907hYo_l0v-j"
+      },
+      "id": "907hYo_l0v-j",
+      "execution_count": null,
+      "outputs": []
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "gpuType": "T4",
+      "toc_visible": true,
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+      },
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.8.18"
+    },
+    "accelerator": "GPU"
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
